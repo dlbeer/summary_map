@@ -1,0 +1,246 @@
+========================================================================
+Summary map -- std::map with efficient aggregation
+========================================================================
+
+Daniel Beer <dlbeer@gmail.com>
+7 Dec 2012
+
+------------------------------------------------------------------------
+Contents
+------------------------------------------------------------------------
+
+1. Overview
+2. Query efficiency
+3. Customization
+4. Method list
+5. Exceptions
+
+------------------------------------------------------------------------
+1. Overview
+------------------------------------------------------------------------
+
+A summary map is a drop-in replacement for std::map with the additional
+property that it supports efficient computation of aggregate functions
+over contiguous ranges.
+
+This is achieved by arranging the stored items in an augmented red-black
+tree and then caching partially computed aggregates over subtrees.
+
+Any aggregate function can be selected for an instance, but it is fixed
+and it must satisfy the following properties:
+
+  - it must be computable with an associative binary function
+  - it must have an identity value, which doesn't change the value that
+    it's combined with
+
+Examples of suitable aggregates are:
+
+  - sum: computed with + and having identity 0
+  - product: computed with * and having identity 1
+
+The easiest way to define an aggregate is to declare a type with three
+constructors:
+
+  - a no-argument constructor for producing an identity value
+  - a constructor which takes std::pair<Key, Data>, and returns an
+    aggregate over a single value
+  - a constructor taking two aggregates and producing the combination of
+    the two
+
+For example, suppose we have been keeping word counts in an
+std::map<std::string, int>. Each key corresponds to some word in a block
+of input text, with the mapped value being the number of times that word
+occurs.
+
+Now want to be able to count the number of times words within a given
+range occur -- for example, how many words in the original text fall
+alphabetically between "apple" and "banana"? We could define a summing
+aggregate as follows:
+
+    struct word_sum {
+	int total;
+
+        // Identity
+	word_sum() : total(0) { }
+
+	// Aggregate over a single value
+	word_sum(const std::pair<const std::string, int>& v) :
+	    total(v.second) { }
+
+	// Combination of two aggregates
+	word_sum(const word_sum& a, const word_sum& b) :
+	    total(a.total + b.total) { }
+    };
+
+Then, rather than using std::map<std::string, int>, we instantiate a
+compatible summary map instead:
+
+    summary_map<std::string, int, word_sums> my_map;
+
+If we've filled it with word counts, we can then answer our original
+question with the sum() operation, giving two iterators to specify a
+range:
+
+    const word_sum answer =
+        my_map.sum(my_map.lower_bound("apple"),
+	           my_map.lower_bound("banana"));
+
+There is also an overload of sum() which takes no arguments, and returns
+the aggregate computed over the entire tree contents. Aggregate
+computation is done lazily and cached at each node (the value cached at
+each node represents the sum of the subtree rooted at the same node).
+The sum call may require examination of the entire tree, but subsequent
+calls will reuse previously computed partial aggregates (this is why
+sum() and sum(a, b) are not const methods).
+
+------------------------------------------------------------------------
+2. Query efficiency
+------------------------------------------------------------------------
+
+If all partial aggregates are cached, a call to sum() takes O(1) time,
+and sum(a, b) takes O(log n) time. If no partial aggregates are cached,
+then sum() takes O(n) time, and sum(a, b) takes O(m) time, where m is
+the number of elements in the range [a, b].
+
+It gets more complicated if modifications are made between summation
+requests. A single element insertion/deletion will invalidate O(log n)
+cached values, and cause the next sum() call to run in O(log n) time. A
+sum(a, b) call will also run in O(log n) time.
+
+The expected run time gets worse if more modifications have been made
+since the last sum() call, but the runtime will never be worse than
+linear -- which is what you'd get by calculating the aggregate from
+scratch anyway.
+
+If you need to avoid worst-case query times and are willing to trade
+some constant-factor efficiency to get it, you can call sum() after each
+modification to the map. This causes all invalidated summaries to be
+recalculated, and ensures that any subsequent summation requests will
+make full use of cached values. Note that sum() itself will run in O(log
+n) time if you call it after single-element modifications, so it doesn't
+change the asymptotic time complexity of insert/erase to do this.
+
+------------------------------------------------------------------------
+3. Customization
+------------------------------------------------------------------------
+
+The full template specification for summary_map is:
+
+    template <class Key, class Data, class Summary,
+      class Compare = std::less<Key>,
+      class Aggregate = aggregator<std::pair<const Key, Data>, Summary>,
+      class Allocator = std::allocator<std::pair<const Key, Data> > >
+    class summary_map;
+
+In addition to the usual ways that an std::map can be customized
+(comparison, allocation), you can also specify a custom set of
+aggregation operations.
+
+In the examples shown above, we defined an aggregate value which was
+computed through its constructors. This works fine for ad-hoc
+aggregates, but what if you want to reuse the same data type with
+different aggregation operations, or if you want to use a simple type
+like int as an aggregate? You can do this by supplying an aggregator
+other than the default. An aggregator must supply three methods:
+
+    Summary nothing() const;
+    Summary summarize(Value v) const;
+    Summary combine(Summary a, Summary b) const;
+
+The default aggregator template implements these by passing the values
+on to the constructor of the Summary type. Here's how we could implement
+the word-count aggregate shown above, but using int as a summary type:
+
+    struct int_aggregator {
+        int nothing() const { return 0; }
+	int summarize(const std::pair<const std::string, int>& v)
+	    { return v.second; }
+	int combine(int a, int b) { return a + b; }
+    };
+
+We could then instantiate and use our summary_map without having to use
+the word_sum type:
+
+    summary_map<std::string, int, int,
+                std::less<std::string>, int_aggregator> my_map;
+
+    const int answer =
+        my_map.sum(my_map.lower_bound("apple"),
+	           my_map.lower_bound("banana"));
+
+------------------------------------------------------------------------
+4. Method list
+------------------------------------------------------------------------
+
+All methods and typedefs usually found in std::map are available. There
+are two additional typedefs:
+
+    typedef Summary                     summary_type;
+    typedef Aggregate                   aggregator_type;
+
+The following additional methods are provided:
+
+    aggregator_type get_aggregator() const;
+    summary_type sum();
+    summary_type sum(const_iterator first, const_iterator last);
+
+A free-standing swap() function is provided which implements an
+efficient no-throw swap of two containers (by forwarding to the swap()
+member function).
+
+Unless the preprocessor symbol SUMMARY_MAP_NO_CPP11 is defined, the
+following features are enabled:
+
+  - initializer lists: summary_map(std::initializer_list<value_type>)
+  - move constructor: summary_map(summary_map&&)
+  - move assignment: operator=(summary_map&&)
+
+If the preprocessor symbol SUMMARY_MAP_DEBUG is defined, an additional
+member function is provided:
+
+    void check();
+
+This function scans the data structure and verifies that all the
+invariants of an red-black tree are satisfied (red-black balancing rules
+and ordering). It runs in O(n) time and is intended for debugging
+purposes only.
+
+------------------------------------------------------------------------
+5. Exceptions
+------------------------------------------------------------------------
+
+The summary_map class throws no exceptions directly, but it invokes
+operations on user-supplied types which might throw exceptions. In any
+case, certain guarantees are made (some conditional). The conditions
+required are:
+
+  * Any supplied allocator's deallocate() method must be no-throw.
+
+  * User-supplied comparison, aggregation and allocation objects may
+    throw exceptions in their assignment operators and constructors, but
+    if so, they must also provide no-throw swap() functions that can be
+    found via ADL.
+
+These conditions are met for the default types. Given these, the
+following guarantees are made:
+
+  * sum(), sum(a, b) will propagate exceptions if the aggregator throws
+    them, but it will not alter or corrupt the container in any case.
+    Any partial summaries which are computed successfully will be kept
+    cached.
+
+  * The following operations are no-throw:
+    - move construction and assignment
+    - swap()
+    - clear()
+    - empty(), size(), max_size()
+    - all iterator operations
+    - find(), lower_bound(), upper_bound(), count(), equal_range()
+    - erase(pos), erase(key), erase(first, last)
+
+  * If an exception is thrown during insertion or modification of a
+    single element, no change to the container will be effected.
+    However, if an exception occurs during the range variant of insert,
+    all inserted elements at the point the exception occurs will remain.
+    That is, range insert is equivalent to a repeated single-element
+    insert.
