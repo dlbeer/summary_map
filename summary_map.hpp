@@ -362,6 +362,13 @@ private:
 	n->flags &= ~node::SUM_VALID;
     }
 
+    // Invalidate n and its anscestors
+    static void invalidate_up(node *n)
+    {
+	for (node *p = n; !is_header(p); p = p->parent)
+	    invalidate(p);
+    }
+
     // Fix the downwards pointer from p to old by setting it to n.
     static void fix_downptr(node *p, node *old, node *n)
     {
@@ -591,7 +598,7 @@ private:
 	    n->right->parent = n;
     }
 
-    void rebalance_after_remove(node *p)
+    static void rebalance_after_remove(node *p)
     {
 	node *n = 0;
 	node *s;
@@ -705,7 +712,7 @@ private:
 
     // Unlink the given node from the tree and rebalance. The node is
     // not deallocated -- you need to do this yourself.
-    void unlink_node(node *n)
+    static void unlink_node(node *n)
     {
 	// If we have two children, swap and reduce the problem to that
 	// of removing a node with a single child. After removing n,
@@ -713,9 +720,7 @@ private:
 	if (n->left && n->right)
 	    swap_with_successor(n);
 
-	// Invalidate all summaries from n up.
-	for (node *nn = n->parent; !is_header(nn); nn = nn->parent)
-	    invalidate(nn);
+	invalidate_up(n);
 
 	// Replace the node with its child (if any).
 	node *s = n->left ? n->left : n->right;
@@ -1219,7 +1224,10 @@ public:
     // Search functions
     iterator find(const key_type& target)
     {
-	return iterator(find_eq(comparer, target, &header));
+	node *n = find_eq(comparer, target, &header);
+
+	invalidate_up(n);
+	return n;
     }
 
     const_iterator find(const key_type& target) const
@@ -1229,7 +1237,10 @@ public:
 
     iterator lower_bound(const key_type& target)
     {
-	return iterator(find_ge(comparer, target, &header));
+	node *n = find_ge(comparer, target, &header);
+
+	invalidate_up(n);
+	return n;
     }
 
     const_iterator lower_bound(const key_type& target) const
@@ -1239,7 +1250,10 @@ public:
 
     iterator upper_bound(const key_type& target)
     {
-	return iterator(find_le(comparer, target, &header));
+	node *n = find_le(comparer, target, &header);
+
+	invalidate_up(n);
+	return n;
     }
 
     const_iterator upper_bound(const key_type& target) const
