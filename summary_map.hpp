@@ -1065,11 +1065,13 @@ public:
 
 	reference operator*() const
 	{
+	    invalidate_up(m_cur);
 	    return m_cur->value;
 	}
 
 	pointer operator->() const
 	{
+	    invalidate_up(m_cur);
 	    return &m_cur->value;
 	}
 
@@ -1224,10 +1226,7 @@ public:
     // Search functions
     iterator find(const key_type& target)
     {
-	node *n = find_eq(comparer, target, &header);
-
-	invalidate_up(n);
-	return n;
+	return find_eq(comparer, target, &header);
     }
 
     const_iterator find(const key_type& target) const
@@ -1237,10 +1236,7 @@ public:
 
     iterator lower_bound(const key_type& target)
     {
-	node *n = find_ge(comparer, target, &header);
-
-	invalidate_up(n);
-	return n;
+	return find_ge(comparer, target, &header);
     }
 
     const_iterator lower_bound(const key_type& target) const
@@ -1250,10 +1246,7 @@ public:
 
     iterator upper_bound(const key_type& target)
     {
-	node *n = find_le(comparer, target, &header);
-
-	invalidate_up(n);
-	return n;
+	return find_le(comparer, target, &header);
     }
 
     const_iterator upper_bound(const key_type& target) const

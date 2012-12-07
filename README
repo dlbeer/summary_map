@@ -120,9 +120,9 @@ make full use of cached values. Note that sum() itself will run in O(log
 n) time if you call it after single-element modifications, so it doesn't
 change the asymptotic time complexity of insert/erase to do this.
 
-Note that the non-const versions of find(), lower_bound() and
-upper_bound(), and operator[] will invalidate summaries. This is
-necessary because aggregates may depend on mapped data.
+Note that dereferencing a mutable iterator will invalidate some
+summaries. This is necessary because aggregates may depend on mapped
+data.
 
 ------------------------------------------------------------------------
 3. Customization
