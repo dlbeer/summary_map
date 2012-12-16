@@ -952,9 +952,9 @@ public:
 
     summary_map& operator=(summary_map&& r)
     {
-	clear();
-	swap(r);
+	summary_map m(std::move(r));
 
+	swap(m);
 	return *this;
     }
 
